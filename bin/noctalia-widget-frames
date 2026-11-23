@@ -12,7 +12,7 @@ Excluídos (sem fundo nem borda):
 Moldura: borda externa 3px #6b0f2a, interna 2px #8a1230, cantos retos.
 Stickers de foto/gif: box ajustado para proporção exata da imagem.
 """
-import os, re, sys, hashlib, fcntl
+import os, re, sys, hashlib, fcntl, subprocess
 from pathlib import Path
 
 try:
@@ -129,7 +129,8 @@ def main():
     widgets = parse_widgets(lines)
     changed = False
 
-    # 1. remover chaves inválidas
+    # 1. remover chaves inválidas (de trás para frente para não deslocar índices)
+    edits = []
     for wid, w in list(widgets.items()):
         if "settings" not in w or wid.startswith(FRAME_PREFIX): continue
         block = lines[w["settings"] + 1:w["settings_end"]]
@@ -137,13 +138,15 @@ def main():
                      if not (KV_RE.match(ln.rstrip("\n")) and
                              KV_RE.match(ln.rstrip("\n")).group(2) in INVALID_KEYS)]
         if new_block != block:
-            lines[w["settings"] + 1:w["settings_end"]] = new_block
-            changed = True
+            edits.append((w["settings"] + 1, w["settings_end"], new_block))
+    for start, end, repl in sorted(edits, reverse=True):
+        lines[start:end] = repl
+        changed = True
     if changed:
         widgets = parse_widgets(lines)
-        changed = False
 
-    # 2. background=false nos excluídos
+    # 2. background=false nos excluídos (também de trás para frente)
+    edits = []
     for wid, w in widgets.items():
         if wid.startswith(FRAME_PREFIX) or not is_excluded(w.get("type", "")): continue
         if "settings" not in w: continue
@@ -161,11 +164,13 @@ def main():
                     new_block.append(ln)
             if not found:
                 new_block.append("        background = false\n")
-            lines[w["settings"] + 1:w["settings_end"]] = new_block
-            changed = True
+            if new_block != block:
+                edits.append((w["settings"] + 1, w["settings_end"], new_block))
+    for start, end, repl in sorted(edits, reverse=True):
+        lines[start:end] = repl
+        changed = True
     if changed:
         widgets = parse_widgets(lines)
-        changed = False
 
     # 3. redimensionar stickers de foto/gif
     for wid, w in widgets.items():
@@ -196,7 +201,6 @@ def main():
         changed = True
     if changed:
         widgets = parse_widgets(lines)
-        changed = False
 
     # 4. determinar molduras necessárias
     needed = {}  # fid -> (wid, w, bw, bh)
@@ -221,13 +225,21 @@ def main():
             fbw, fbh = fw.get("box_width", 0), fw.get("box_height", 0)
             if abs(fbw - tbw) > 0.5 or abs(fbh - tbh) > 0.5:
                 to_remove.append(fid)
+    # remover todos de uma vez, de trás para frente (índices estáveis)
+    ranges = []
     for fid in to_remove:
-        lines = remove_widget(lines, fid, widgets)
+        fw = widgets.get(fid)
+        if not fw: continue
+        if "settings" in fw:
+            ranges.append((fw["settings"], fw["settings_end"]))
+        ranges.append((fw["header"], fw["end"]))
         png = FRAMES_DIR / f"{fid}.png"
         if png.exists(): png.unlink()
         print(f"[-] removida: {fid}", file=sys.stderr)
+    for start, end in sorted(set(ranges), reverse=True):
+        del lines[start:end]
+    if ranges:
         changed = True
-    if to_remove:
         widgets = parse_widgets(lines)
         existing_frames = {wid: w for wid, w in widgets.items() if wid.startswith(FRAME_PREFIX)}
 
@@ -294,8 +306,16 @@ def main():
         changed = True
 
     if changed:
-        SETTINGS.write_text(text, encoding="utf-8")
-        print(f"\nconfig atualizada. rode: noctalia msg config-reload", file=sys.stderr)
+        # escrita atomica: nunca deixa o arquivo pela metade
+        tmp = SETTINGS.with_suffix(".toml.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, SETTINGS)
+        print("\nconfig atualizada. recarregando...", file=sys.stderr)
+        try:
+            subprocess.run(["noctalia", "msg", "config-reload"],
+                           capture_output=True, timeout=10)
+        except Exception as e:
+            print(f"[!] config-reload falhou: {e}", file=sys.stderr)
     else:
         print("nada a mudar: molduras já estão corretas", file=sys.stderr)
 
