@@ -1,0 +1,13 @@
+[[plugin]]
+id = "victor/profiles"
+name = "Profiles"
+version = "1.0.0"
+updated_at = 1795450000
+added_at = 1795450000
+author = "victor"
+license = "MIT"
+icon = "save"
+description = "Salva e aplica perfis completos de personalizacao do Noctalia (config, widgets, layout, frames, fontes, cores, wallpaper e plugins)."
+plugin_api = 46
+tags = ["system", "backup", "desktop", "personalization"]
+dependencies = []
