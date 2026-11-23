@@ -1,68 +1,83 @@
--- victor/profiles service — salva/aplica perfis de personalizacao do Noctalia.
--- Chamar via: noctalia msg plugin victor/profiles:service all <acao> [nome]
--- acoes: save | apply | list | delete
+-- victor/profiles service — salva/aplica perfis completos do Noctalia.
+-- IPC:
+--   noctalia msg plugin victor/profiles:service all "save <nome>"
+--   noctalia msg plugin victor/profiles:service all "apply <nome>"
+--   noctalia msg plugin victor/profiles:service all "list"
+--   noctalia msg plugin victor/profiles:service all "delete <nome>"
 
-local PROFILE_CMD = "noctalia-profile"
+local CMD = "noctalia-profile"
 
-local last_result = ""
-
-function run(cmd, args)
-    local full = {PROFILE_CMD, cmd, table.unpack(args or {})}
-    local ok, res = pcall(noctalia.runSync, full)
-    if not ok then
-        return "erro ao executar " .. cmd .. ": " .. tostring(res)
-    end
-    local out = ""
-    if type(res) == "table" then
-        out = res.stdout or ""
-        if res.stderr and res.stderr ~= "" then out = out .. "\n" .. res.stderr end
-    else
-        out = tostring(res)
-    end
-    return out
+local function notify(t, b)
+    if noctalia.notify then noctalia.notify(t, b or "") end
 end
 
-function handle(action, name)
+local function log(m)
+    if noctalia.log then noctalia.log("[profiles] " .. tostring(m)) end
+end
+
+local function run(args, done)
+    noctalia.runAsync({CMD, table.unpack(args)}, function(r)
+        local out = ""
+        if type(r) == "table" then
+            out = (r.stdout or "")
+            if r.stderr and r.stderr ~= "" then out = out .. "\n" .. r.stderr end
+        elseif type(r) == "string" then
+            out = r
+        end
+        if done then done(out) end
+    end)
+end
+
+local function split(s)
+    local parts = {}
+    for p in tostring(s):gmatch("%S+") do table.insert(parts, p) end
+    return parts
+end
+
+local function handle(action, name)
+    log("acao=" .. tostring(action) .. " nome=" .. tostring(name))
     if action == "save" then
-        if not name or name == "" then return "uso: save <nome>" end
-        last_result = run("save", {name})
+        if not name or name == "" then notify("Profiles", "uso: save <nome>"); return end
+        run({"save", name}, function(out)
+            notify("Perfil salvo", name .. (out ~= "" and ("\n" .. out) or ""))
+        end)
     elseif action == "apply" then
-        if not name or name == "" then return "uso: apply <nome>" end
-        last_result = run("apply", {name})
+        if not name or name == "" then notify("Profiles", "uso: apply <nome>"); return end
+        run({"apply", name}, function(out)
+            notify("Perfil aplicado", name .. (out ~= "" and ("\n" .. out) or ""))
+        end)
     elseif action == "list" then
-        last_result = run("list", {})
+        run({"list"}, function(out)
+            notify("Perfis", out ~= "" and out or "nenhum perfil salvo")
+        end)
     elseif action == "delete" then
-        if not name or name == "" then return "uso: delete <nome>" end
-        -- python script nao tem delete ainda; faz manual
-        local pd = noctalia.expandPath("~/.local/state/noctalia/profiles/" .. name)
-        local ok, res = pcall(noctalia.removeFile, pd .. "/settings.toml")
-        -- simples: remove diretorio vazio via rm -rf assincrono seria ideal
-        last_result = run("list", {})
+        if not name or name == "" then notify("Profiles", "uso: delete <nome>"); return end
+        run({"delete", name}, function(out)
+            notify("Perfil removido", name)
+        end)
     else
-        last_result = "acao desconhecida: " .. tostring(action) .. " (save|apply|list|delete)"
+        notify("Profiles", "acao desconhecida: " .. tostring(action) .. "\nuse save|apply|list|delete")
     end
-    return last_result
 end
 
 function onIpc(event, payload)
-    -- payload pode ser string "save meu-perfil" ou json {action="save", name="..."}
     local action, name
-    if type(payload) == "string" and payload ~= "" then
-        local parts = {}
-        for part in payload:gmatch("%S+") do table.insert(parts, part) end
-        action = parts[1]
-        name = parts[2]
-    elseif type(payload) == "table" then
+    if type(payload) == "table" then
         action = payload.action
         name = payload.name
-    else
-        action = event
+    elseif type(payload) == "string" and payload ~= "" then
+        local parts = split(payload)
+        action = parts[1]
+        name = parts[2]
     end
-    return handle(action, name)
+    if not action then
+        local parts = split(event)
+        action = parts[1]
+        name = parts[2]
+    end
+    handle(action, name)
 end
 
-function onConfigChanged()
-    -- nada a fazer
-end
+function onConfigChanged() end
 
-last_result = "profiles service pronto. use: noctalia msg plugin victor/profiles:service all save <nome>"
+log("service pronto")
