@@ -17,6 +17,20 @@
         "label": "Image height",
         "description": "Height of the image area (kept in sync with the widget size)"
       }
+    },
+    "label": {
+      "title": {
+        "label": "Title",
+        "description": "Text shown on the desktop label"
+      },
+      "font_size": {
+        "label": "Font size",
+        "description": "Size of the label text"
+      },
+      "font_weight": {
+        "label": "Font weight",
+        "description": "Weight of the label text"
+      }
     }
   }
 }

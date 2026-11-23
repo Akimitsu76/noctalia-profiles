@@ -27,6 +27,7 @@ FRAMES_DIR = HOME / ".local" / "state" / "noctalia" / "frames"
 EXCLUDE_PREFIXES = (
     "victor/fastfetch-desktop:",
     "victor/profiles:sticker",  # moldura nativa via ui.column
+    "victor/profiles:label",    # moldura nativa via ui.column
     "tausif/ncs-visualizer:",
 )
 EXCLUDE_TYPES = ("audio_visualizer", "fancy_audio_visualizer")

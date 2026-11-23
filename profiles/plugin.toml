@@ -67,3 +67,30 @@ description_key = "settings.sticker.image_height.description"
 default = 320
 min = 16
 max = 4096
+
+[[desktop_widget]]
+id = "label"
+entry = "gothic-label.luau"
+
+[[desktop_widget.setting]]
+key = "title"
+type = "string"
+label_key = "settings.label.title.label"
+description_key = "settings.label.title.description"
+default = ""
+
+[[desktop_widget.setting]]
+key = "font_size"
+type = "int"
+label_key = "settings.label.font_size.label"
+description_key = "settings.label.font_size.description"
+default = 26
+min = 8
+max = 72
+
+[[desktop_widget.setting]]
+key = "font_weight"
+type = "string"
+label_key = "settings.label.font_weight.label"
+description_key = "settings.label.font_weight.description"
+default = "bold"

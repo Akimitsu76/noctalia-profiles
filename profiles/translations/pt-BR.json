@@ -17,6 +17,20 @@
         "label": "Altura da imagem",
         "description": "Altura da área da imagem (sincronizada com o tamanho do widget)"
       }
+    },
+    "label": {
+      "title": {
+        "label": "Título",
+        "description": "Texto exibido no label da área de trabalho"
+      },
+      "font_size": {
+        "label": "Tamanho da fonte",
+        "description": "Tamanho do texto do label"
+      },
+      "font_weight": {
+        "label": "Peso da fonte",
+        "description": "Peso do texto do label"
+      }
     }
   }
 }
