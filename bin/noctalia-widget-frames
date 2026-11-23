@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""noctalia-widget-frames — moldura gótico-dark via stickers PNG sobrepostos.
+"""noctalia-widget-frames — moldura gótico-dark automática via stickers PNG.
 
-O Noctalia v5.5+ não suporta borda nativa em widgets de desktop.
-Este script gera imagens PNG transparentes com borda gótica e as adiciona
-como stickers sobrepostos a cada widget.
+Modo incremental (padrão): só gera molduras para widgets novos, remove obsoletas,
+atualiza stickers redimensionados. Não toca em molduras corretas.
+Modo --full: remove todas e recria.
 
 Excluídos (sem fundo nem borda):
-  - victor/fastfetch-desktop:*
-  - tausif/ncs-visualizer:*
-  - audio_visualizer
-  - fancy_audio_visualizer
+  - victor/fastfetch-desktop:*, tausif/ncs-visualizer:*
+  - audio_visualizer, fancy_audio_visualizer
 
-Moldura gótico-dark (tom vinho escuro):
-  borda externa 3px #6b0f2a
-  borda interna 2px #8a1230
-  cantos retos, interior transparente
-
-Stickers de foto/gif: box redimensionado para proporção exata da imagem.
-
-Idempotente. Depois: noctalia msg config-reload
+Moldura: borda externa 3px #6b0f2a, interna 2px #8a1230, cantos retos.
+Stickers de foto/gif: box ajustado para proporção exata da imagem.
 """
-import os, re, sys
+import os, re, sys, hashlib
 from pathlib import Path
 
 try:
@@ -36,10 +28,9 @@ EXCLUDE_PREFIXES = ("victor/fastfetch-desktop:", "tausif/ncs-visualizer:")
 EXCLUDE_TYPES = ("audio_visualizer", "fancy_audio_visualizer")
 FRAME_PREFIX = "gothic-frame-"
 
-OUTER_COLOR = (0x6b, 0x0f, 0x2a, 255)   # #6b0f2a — vinho escuro gótico
-INNER_COLOR = (0x8a, 0x12, 0x30, 255)   # #8a1230 — vermelho escuro
-OUTER_W = 3
-INNER_W = 2
+OUTER_COLOR = (0x6b, 0x0f, 0x2a, 255)
+INNER_COLOR = (0x8a, 0x12, 0x30, 255)
+OUTER_W, INNER_W = 3, 2
 
 INVALID_KEYS = (
     "background_border", "background_border_width",
@@ -55,9 +46,11 @@ TYPE_RE = re.compile(r'^\s*type\s*=\s*"([^"]+)"')
 
 
 def is_excluded(wtype):
-    if wtype in EXCLUDE_TYPES:
-        return True
-    return any(wtype.startswith(p) for p in EXCLUDE_PREFIXES)
+    return wtype in EXCLUDE_TYPES or any(wtype.startswith(p) for p in EXCLUDE_PREFIXES)
+
+
+def frame_hash(w, h):
+    return hashlib.md5(f"{int(w)}x{int(h)}:{OUTER_COLOR}:{INNER_COLOR}".encode()).hexdigest()[:8]
 
 
 def gen_frame_png(path, w, h):
@@ -65,21 +58,15 @@ def gen_frame_png(path, w, h):
     if w < 10 or h < 10:
         w, h = max(w, 10), max(h, 10)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, w - 1, h - 1], outline=OUTER_COLOR, width=OUTER_W)
-    draw.rectangle(
-        [OUTER_W, OUTER_W, w - 1 - OUTER_W, h - 1 - OUTER_W],
-        outline=INNER_COLOR, width=INNER_W,
-    )
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, w - 1, h - 1], outline=OUTER_COLOR, width=OUTER_W)
+    d.rectangle([OUTER_W, OUTER_W, w - 1 - OUTER_W, h - 1 - OUTER_W], outline=INNER_COLOR, width=INNER_W)
     img.save(path, "PNG")
 
 
 def parse_widgets(lines):
-    headers = []
-    for n, ln in enumerate(lines):
-        m = HEADER_RE.match(ln.rstrip("\n"))
-        if m:
-            headers.append((n, m.group(1)))
+    headers = [(n, HEADER_RE.match(ln.rstrip("\n")).group(1))
+               for n, ln in enumerate(lines) if HEADER_RE.match(ln.rstrip("\n"))]
     widgets = {}
     for pos, (n, name) in enumerate(headers):
         mw = WIDGET_RE.match(name)
@@ -89,16 +76,13 @@ def parse_widgets(lines):
             w = {"header": n, "end": end, "type": ""}
             for ln in lines[n + 1:end]:
                 mt = TYPE_RE.match(ln)
-                if mt:
-                    w["type"] = mt.group(1)
+                if mt: w["type"] = mt.group(1)
                 for key in ("cx", "cy", "box_width", "box_height", "output"):
                     mk = re.match(r'^\s*' + key + r'\s*=\s*(.+)', ln)
                     if mk:
                         val = mk.group(1).strip().strip('"')
-                        try:
-                            w[key] = float(val) if key != "output" else val
-                        except ValueError:
-                            w[key] = val
+                        try: w[key] = float(val) if key != "output" else val
+                        except ValueError: w[key] = val
             widgets[wid] = w
     for pos, (n, name) in enumerate(headers):
         ms = SETTINGS_RE.match(name)
@@ -107,183 +91,149 @@ def parse_widgets(lines):
             end = headers[pos + 1][0] if pos + 1 < len(headers) else len(lines)
             if wid in widgets:
                 widgets[wid].update(settings=n, settings_end=end)
+                # ler image_path e background
+                for ln in lines[n + 1:end]:
+                    mi = re.match(r'^\s*image_path\s*=\s*"([^"]+)"', ln)
+                    if mi: widgets[wid]["image_path"] = mi.group(1)
+                    mb = re.match(r'^\s*background\s*=\s*(true|false)', ln)
+                    if mb: widgets[wid]["background"] = mb.group(1) == "true"
     return widgets
 
 
-def remove_invalid_keys(lines, widgets):
-    edits = []
-    for wid, w in widgets.items():
-        if "settings" not in w:
-            continue
+def remove_widget(lines, wid, widgets):
+    """Remove um widget (header + settings) do lines."""
+    w = widgets.get(wid)
+    if not w: return lines
+    ranges = []
+    if "settings" in w:
+        ranges.append((w["settings"], w["settings_end"]))
+    ranges.append((w["header"], w["end"]))
+    for start, end in sorted(ranges, reverse=True):
+        del lines[start:end]
+    return lines
+
+
+def main():
+    full = "--full" in sys.argv
+    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+    text = SETTINGS.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    widgets = parse_widgets(lines)
+    changed = False
+
+    # 1. remover chaves inválidas
+    for wid, w in list(widgets.items()):
+        if "settings" not in w or wid.startswith(FRAME_PREFIX): continue
         block = lines[w["settings"] + 1:w["settings_end"]]
         new_block = [ln for ln in block
                      if not (KV_RE.match(ln.rstrip("\n")) and
                              KV_RE.match(ln.rstrip("\n")).group(2) in INVALID_KEYS)]
         if new_block != block:
-            edits.append((w["settings"] + 1, w["settings_end"], new_block))
-    for start, end, repl in sorted(edits, reverse=True):
-        lines[start:end] = repl
-    return lines
+            lines[w["settings"] + 1:w["settings_end"]] = new_block
+            changed = True
+    if changed:
+        widgets = parse_widgets(lines)
+        changed = False
 
-
-def remove_old_frames(lines):
-    headers = []
-    for n, ln in enumerate(lines):
-        m = HEADER_RE.match(ln.rstrip("\n"))
-        if m:
-            headers.append((n, m.group(1)))
-    to_remove = []
-    for pos, (n, name) in enumerate(headers):
-        mw = WIDGET_RE.match(name)
-        ms = SETTINGS_RE.match(name)
-        wid = (mw or ms)
-        if wid and wid.group(1).startswith(FRAME_PREFIX):
-            end = headers[pos + 1][0] if pos + 1 < len(headers) else len(lines)
-            to_remove.append((n, end))
-    for start, end in sorted(to_remove, reverse=True):
-        del lines[start:end]
-    text = "".join(lines)
-    text = re.sub(
-        r'(widget_order\s*=\s*\[)([^\]]*)(\])',
-        lambda m: m.group(1) + ", ".join(
-            x.strip() for x in m.group(2).split(",")
-            if x.strip() and FRAME_PREFIX not in x
-        ) + m.group(3),
-        text,
-    )
-    return text.splitlines(keepends=True)
-
-
-def set_background_false(lines, widgets, excluded_ids):
-    """Para widgets excluídos, garante background=false nos settings."""
-    edits = []
-    for wid in excluded_ids:
-        w = widgets.get(wid)
-        if not w or "settings" not in w:
-            continue
-        block = lines[w["settings"] + 1:w["settings_end"]]
-        new_block = []
-        found_bg = False
-        for ln in block:
-            m = KV_RE.match(ln.rstrip("\n"))
-            if m and m.group(2) == "background":
-                new_block.append(f"{m.group(1)}background = false\n")
-                found_bg = True
-            elif m and m.group(2) == "background_opacity":
-                continue  # remove opacity (não faz sentido sem background)
-            else:
-                new_block.append(ln)
-        if not found_bg:
-            indent = "        "
-            new_block.append(f"{indent}background = false\n")
-        if new_block != block:
-            edits.append((w["settings"] + 1, w["settings_end"], new_block))
-    for start, end, repl in sorted(edits, reverse=True):
-        lines[start:end] = repl
-    return lines
-
-
-def resize_sticker_boxes(lines, widgets):
-    """Ajusta box_width/box_height de stickers para proporção exata da imagem."""
-    edits = []
+    # 2. background=false nos excluídos
     for wid, w in widgets.items():
-        if w.get("type") != "sticker" or wid.startswith(FRAME_PREFIX):
-            continue
-        if "settings" not in w:
-            continue
-        # ler image_path dos settings
-        block = lines[w["settings"] + 1:w["settings_end"]]
-        img_path = None
-        for ln in block:
-            m = re.match(r'^\s*image_path\s*=\s*"([^"]+)"', ln)
-            if m:
-                img_path = m.group(1)
-                break
-        if not img_path:
-            continue
+        if wid.startswith(FRAME_PREFIX) or not is_excluded(w.get("type", "")): continue
+        if "settings" not in w: continue
+        if w.get("background") is not False:
+            block = lines[w["settings"] + 1:w["settings_end"]]
+            new_block = []
+            found = False
+            for ln in block:
+                m = KV_RE.match(ln.rstrip("\n"))
+                if m and m.group(2) == "background":
+                    new_block.append(f"{m.group(1)}background = false\n"); found = True
+                elif m and m.group(2) == "background_opacity":
+                    continue
+                else:
+                    new_block.append(ln)
+            if not found:
+                new_block.append("        background = false\n")
+            lines[w["settings"] + 1:w["settings_end"]] = new_block
+            changed = True
+    if changed:
+        widgets = parse_widgets(lines)
+        changed = False
+
+    # 3. redimensionar stickers de foto/gif
+    for wid, w in widgets.items():
+        if w.get("type") != "sticker" or wid.startswith(FRAME_PREFIX): continue
+        img_path = w.get("image_path")
+        if not img_path: continue
         try:
-            im = Image.open(img_path)
-            iw, ih = im.size
-        except Exception:
-            continue
-        if iw == 0 or ih == 0:
-            continue
-        bw = w.get("box_width", 0)
-        bh = w.get("box_height", 0)
-        if not bw or not bh:
-            continue
-        # manter a largura atual, ajustar altura para proporção exata
+            im = Image.open(img_path); iw, ih = im.size
+        except Exception: continue
+        bw, bh = w.get("box_width", 0), w.get("box_height", 0)
+        if not bw or not bh or not iw or not ih: continue
         new_bw = round(bw)
         new_bh = round(new_bw * ih / iw)
-        if new_bh < 10:
-            new_bh = 10
-        # verificar se mudou
-        if abs(new_bw - bw) < 0.5 and abs(new_bh - bh) < 0.5:
-            continue
-        # editar box_width e box_height no corpo do widget
-        widget_block = lines[w["header"] + 1:w["end"]]
-        new_widget_block = []
-        for ln in widget_block:
+        if new_bh < 10: new_bh = 10
+        if abs(new_bw - bw) < 0.5 and abs(new_bh - bh) < 0.5: continue
+        block = lines[w["header"] + 1:w["end"]]
+        new_block = []
+        for ln in block:
             m = KV_RE.match(ln.rstrip("\n"))
             if m and m.group(2) == "box_width":
-                new_widget_block.append(f"{m.group(1)}box_width{m.group(3)}{float(new_bw)}\n")
+                new_block.append(f"{m.group(1)}box_width{m.group(3)}{float(new_bw)}\n")
             elif m and m.group(2) == "box_height":
-                new_widget_block.append(f"{m.group(1)}box_height{m.group(3)}{float(new_bh)}\n")
+                new_block.append(f"{m.group(1)}box_height{m.group(3)}{float(new_bh)}\n")
             else:
-                new_widget_block.append(ln)
-        if new_widget_block != widget_block:
-            edits.append((w["header"] + 1, w["end"], new_widget_block))
-            print(f"[~] redimensionado: {wid} {int(bw)}x{int(bh)} -> {new_bw}x{new_bh} (img {iw}x{ih})", file=sys.stderr)
-        # atualizar widgets dict para geração da moldura
-        w["box_width"] = float(new_bw)
-        w["box_height"] = float(new_bh)
-    for start, end, repl in sorted(edits, reverse=True):
-        lines[start:end] = repl
-    return lines, widgets
+                new_block.append(ln)
+        lines[w["header"] + 1:w["end"]] = new_block
+        print(f"[~] redimensionado: {wid} {int(bw)}x{int(bh)} -> {new_bw}x{new_bh}", file=sys.stderr)
+        changed = True
+    if changed:
+        widgets = parse_widgets(lines)
+        changed = False
 
-
-def main():
-    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-    text = SETTINGS.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-
-    lines = remove_old_frames(lines)
-    widgets = parse_widgets(lines)
-    lines = remove_invalid_keys(lines, widgets)
-    widgets = parse_widgets(lines)
-
-    # redimensionar stickers de foto/gif
-    lines, widgets = resize_sticker_boxes(lines, widgets)
-    widgets = parse_widgets(lines)
-
-    # background=false nos excluídos
-    excluded_ids = [wid for wid, w in widgets.items()
-                    if is_excluded(w.get("type", "")) and not wid.startswith(FRAME_PREFIX)]
-    lines = set_background_false(lines, widgets, excluded_ids)
-    widgets = parse_widgets(lines)
-
-    # gerar molduras
-    new_stickers = []
-    frame_ids = []
+    # 4. determinar molduras necessárias
+    needed = {}  # fid -> (wid, w, bw, bh)
     for wid, w in widgets.items():
-        if wid.startswith(FRAME_PREFIX):
-            continue
-        if is_excluded(w.get("type", "")):
-            print(f"[-] excluído: {wid} ({w.get('type')})", file=sys.stderr)
-            continue
-        bw = w.get("box_width", 0)
-        bh = w.get("box_height", 0)
-        if not bw or not bh or bw < 10 or bh < 10:
-            print(f"[!] sem tamanho: {wid} ({w.get('type')}) — pulando", file=sys.stderr)
-            continue
+        if wid.startswith(FRAME_PREFIX) or is_excluded(w.get("type", "")): continue
+        bw, bh = w.get("box_width", 0), w.get("box_height", 0)
+        if not bw or not bh or bw < 10 or bh < 10: continue
         fid = FRAME_PREFIX + wid
-        png_path = FRAMES_DIR / f"{fid}.png"
-        gen_frame_png(png_path, bw, bh)
-        frame_ids.append(fid)
+        needed[fid] = (wid, w, bw, bh)
+
+    existing_frames = {wid: w for wid, w in widgets.items() if wid.startswith(FRAME_PREFIX)}
+
+    # 5. remover molduras obsoletas (widget não existe mais ou excluído)
+    to_remove = []
+    for fid, fw in existing_frames.items():
+        target_wid = fid[len(FRAME_PREFIX):]
+        if full or fid not in needed:
+            to_remove.append(fid)
+        else:
+            # verificar se tamanho mudou
+            _, tw, tbw, tbh = needed[fid]
+            fbw, fbh = fw.get("box_width", 0), fw.get("box_height", 0)
+            if abs(fbw - tbw) > 0.5 or abs(fbh - tbh) > 0.5:
+                to_remove.append(fid)
+    for fid in to_remove:
+        lines = remove_widget(lines, fid, widgets)
+        png = FRAMES_DIR / f"{fid}.png"
+        if png.exists(): png.unlink()
+        print(f"[-] removida: {fid}", file=sys.stderr)
+        changed = True
+    if to_remove:
+        widgets = parse_widgets(lines)
+        existing_frames = {wid: w for wid, w in widgets.items() if wid.startswith(FRAME_PREFIX)}
+
+    # 6. gerar molduras novas
+    new_stickers = []
+    new_ids = []
+    for fid, (wid, w, bw, bh) in needed.items():
+        if fid in existing_frames and not full: continue
+        png = FRAMES_DIR / f"{fid}.png"
+        gen_frame_png(png, bw, bh)
+        new_ids.append(fid)
         output = w.get("output", "")
-        cx = w.get("cx", 0)
-        cy = w.get("cy", 0)
-        sticker = f"""
+        cx, cy = w.get("cx", 0), w.get("cy", 0)
+        new_stickers.append(f"""
     [desktop_widgets.widget.{fid}]
     box_height = {bh}
     box_width = {bw}
@@ -297,37 +247,49 @@ def main():
 
         [desktop_widgets.widget.{fid}.settings]
         background = false
-        image_path = "{png_path}"
+        image_path = "{png}"
         opacity = 1.0
-"""
-        new_stickers.append(sticker)
+""")
         print(f"[+] moldura: {wid} ({w.get('type')}) {int(bw)}x{int(bh)}", file=sys.stderr)
 
-    text = "".join(lines)
-    insert_pos = len(text)
-    for m in re.finditer(r"(?m)^\[", text):
-        header = text[m.start():text.index("\n", m.start()) if "\n" in text[m.start():] else len(text)]
-        if not header.startswith("[desktop_widgets"):
-            insert_pos = m.start()
-            break
-    text = text[:insert_pos] + "".join(new_stickers) + "\n" + text[insert_pos:]
+    if new_stickers:
+        text = "".join(lines)
+        insert_pos = len(text)
+        for m in re.finditer(r"(?m)^\[", text):
+            header = text[m.start():text.index("\n", m.start()) if "\n" in text[m.start():] else len(text)]
+            if not header.startswith("[desktop_widgets"):
+                insert_pos = m.start(); break
+        text = text[:insert_pos] + "".join(new_stickers) + "\n" + text[insert_pos:]
+        lines = text.splitlines(keepends=True)
+        changed = True
 
-    lines = text.splitlines(keepends=True)
+    # 7. atualizar widget_order
+    all_frame_ids = list(existing_frames.keys()) + new_ids
+    all_frame_ids = [fid for fid in all_frame_ids if fid in needed or fid in existing_frames]
+    # deduplicar
+    all_frame_ids = list(dict.fromkeys(all_frame_ids))
     text = "".join(lines)
     m = re.search(r"(widget_order\s*=\s*\[)([^\]]*)(\])", text)
     if m:
         existing = [x.strip().strip('"') for x in m.group(2).split(",") if x.strip()]
-        existing = [x for x in existing if not x.startswith(FRAME_PREFIX)]
-        all_ids = existing + frame_ids
+        non_frames = [x for x in existing if not x.startswith(FRAME_PREFIX)]
+        # manter ordem: widgets originais + molduras no final
+        frame_order = [fid for fid in needed if fid in all_frame_ids]
+        all_ids = non_frames + frame_order
         new_order = m.group(1) + ", ".join(f'"{x}"' for x in all_ids) + m.group(3)
-        text = text[:m.start()] + new_order + text[m.end():]
-    else:
-        order_line = "widget_order = [" + ", ".join(f'"{x}"' for x in frame_ids) + "]\n"
+        if new_order != m.group(0):
+            text = text[:m.start()] + new_order + text[m.end():]
+            changed = True
+    elif all_frame_ids:
+        order_line = "widget_order = [" + ", ".join(f'"{x}"' for x in all_frame_ids) + "]\n"
         text = re.sub(r"(\[desktop_widgets\]\n)", r"\1" + order_line, text, count=1)
+        changed = True
 
-    SETTINGS.write_text(text, encoding="utf-8")
-    print(f"\n{len(frame_ids)} molduras geradas em {FRAMES_DIR}", file=sys.stderr)
-    print("pronto. rode:  noctalia msg config-reload", file=sys.stderr)
+    if changed:
+        SETTINGS.write_text(text, encoding="utf-8")
+        print(f"\nconfig atualizada. rode: noctalia msg config-reload", file=sys.stderr)
+    else:
+        print("nada a mudar: molduras já estão corretas", file=sys.stderr)
 
 
 if __name__ == "__main__":
