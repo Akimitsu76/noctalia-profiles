@@ -3,6 +3,12 @@
     "profiles_dir": {
       "label": "Profiles directory",
       "description": "Where profiles are stored. Leave empty for ~/.local/state/noctalia/profiles"
+    },
+    "sticker": {
+      "image_path": {
+        "label": "Image path",
+        "description": "Path to the image or GIF to display"
+      }
     }
   }
 }

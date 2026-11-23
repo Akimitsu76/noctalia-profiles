@@ -38,3 +38,14 @@ entry = "service.luau"
 [[service]]
 id = "frames"
 entry = "frames.luau"
+
+[[desktop_widget]]
+id = "sticker"
+entry = "gothic-sticker.luau"
+
+[[desktop_widget.setting]]
+key = "image_path"
+type = "file"
+label_key = "settings.sticker.image_path.label"
+description_key = "settings.sticker.image_path.description"
+default = ""

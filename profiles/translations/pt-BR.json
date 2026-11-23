@@ -3,6 +3,12 @@
     "profiles_dir": {
       "label": "Diretório de perfis",
       "description": "Onde os perfis são salvos. Deixe vazio para ~/.local/state/noctalia/profiles"
+    },
+    "sticker": {
+      "image_path": {
+        "label": "Caminho da imagem",
+        "description": "Caminho da imagem ou GIF a exibir"
+      }
     }
   }
 }
