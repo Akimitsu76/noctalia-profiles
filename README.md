@@ -49,20 +49,19 @@ noctalia-widget-frames
 noctalia msg config-reload
 ```
 
-Aplica moldura gótico-dark (paleta GothicRock) em **todos** os widgets de desktop,
-**exceto** `victor/fastfetch-desktop:*` e `tausif/ncs-visualizer:*`. O script é
-idempotente: rodar de novo não duplica nada.
+O Noctalia v5.5+ **não suporta borda nativa** em widgets de desktop. Este script
+gera **stickers PNG transparentes** com borda gótica dupla e os sobrepõe a cada
+widget (exceto `victor/fastfetch-desktop:*` e `tausif/ncs-visualizer:*`).
 
-| Chave | Valor |
+| Elemento | Valor |
 |---|---|
-| `background_color` | `surface` (`#0c0c10`) |
-| `background_border` | `#a11239` (primary) |
-| `background_border_width` | `3` |
-| `background_inner_border` | `#d21f3c` (error) |
-| `background_inner_border_width` | `2` |
-| `background_radius` | `0` (cantos retos) |
-| `background_padding` | `10` |
-| `background_opacity` | `>= 0.85` (moldura sempre visível) |
+| Borda externa | 3px `#a11239` (primary) |
+| Borda interna | 2px `#d21f3c` (error) |
+| Cantos | retos (radius 0) |
+| Interior | transparente (widget original visível) |
+
+As molduras ficam em `~/.local/state/noctalia/frames/`. O script é idempotente:
+remove molduras antigas e recria. Requer `python3-pillow`.
 
 ## ✦ Uso
 
