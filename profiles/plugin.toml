@@ -1,23 +1,20 @@
 # victor/profiles — plugin estilo "profiles" do Noctalia V4.
 # Salva e aplica perfis completos de personalizacao:
-#   config.toml, settings.toml (widgets, layout, frames/molduras)
-#   e estado dos plugins instalados.
+#   config.toml, settings.toml (widgets, layout, frames/molduras, fontes,
+#   cores, barra, wallpaper) e estado dos plugins instalados.
 #
-# Comandos via IPC:
-#   noctalia msg plugin victor/profiles:service all save  <nome>
-#   noctalia msg plugin victor/profiles:service all apply <nome>
-#   noctalia msg plugin victor/profiles:service all list
-#   noctalia msg plugin victor/profiles:service all delete <nome>
+# Painel:   noctalia msg panel-toggle victor/profiles:profiles
+# Service:  noctalia msg plugin victor/profiles:service all "save <nome>"
 #
 id = "victor/profiles"
 name = "Profiles"
-version = "1.0.0"
+version = "1.1.0"
 plugin_api = 46
 author = "victor"
 license = "MIT"
-tags = ["system", "backup", "desktop"]
+tags = ["system", "backup", "desktop", "personalization"]
 icon = "save"
-description = "Salva e aplica perfis completos de personalizacao do Noctalia (config, widgets, layout, frames e plugins)."
+description = "Salva e aplica perfis completos de personalizacao do Noctalia (config, widgets, layout, frames, fontes, cores, wallpaper e plugins)."
 
 [[setting]]
 key = "profiles_dir"
@@ -25,6 +22,14 @@ type = "folder"
 label_key = "settings.profiles_dir.label"
 description_key = "settings.profiles_dir.description"
 default = ""
+
+[[panel]]
+id = "profiles"
+entry = "panel.luau"
+width = 460
+height = 560
+placement = "floating"
+position = "center"
 
 [[service]]
 id = "service"
