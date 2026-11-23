@@ -1,0 +1,8 @@
+{
+  "settings": {
+    "profiles_dir": {
+      "label": "Profiles directory",
+      "description": "Where profiles are stored. Leave empty for ~/.local/state/noctalia/profiles"
+    }
+  }
+}

@@ -7,7 +7,10 @@
 -- Abrir: noctalia msg panel-toggle victor/profiles:profiles
 
 local HOME = noctalia.getenv("HOME") or ""
-local PROFILES_DIR = noctalia.expandPath("~/.local/state/noctalia/profiles")
+local configuredDir = noctalia.getConfig("profiles_dir")
+local PROFILES_DIR = (type(configuredDir) == "string" and configuredDir ~= "")
+    and noctalia.expandPath(configuredDir)
+    or noctalia.expandPath("~/.local/state/noctalia/profiles")
 local CMD = "noctalia-profile"
 
 local profiles = {}

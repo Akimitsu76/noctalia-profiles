@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""noctalia-profile — perfis completos de personalizacao do Noctalia.
+
+Captura e restaura TUDO:
+  - ~/.config/noctalia/  (config.toml + palettes = fontes, cores, barra, widgets)
+  - ~/.local/state/noctalia/settings.toml (barra, widgets desktop, tema,
+    wallpaper, plugins settings, layout)
+  - ~/.local/state/noctalia/plugins/data/ (estado/dados dos plugins)
+  - arquivos de wallpaper referenciados (copiados para o perfil)
+  - manifest.json (host, data, versao do noctalia, mapa de wallpapers)
+
+Uso:
+  noctalia-profile save  <nome>
+  noctalia-profile apply <nome>
+  noctalia-profile list
+  noctalia-profile delete <nome>
+"""
+import argparse, json, os, re, shutil, socket, subprocess, sys
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path(os.environ.get("HOME", Path.home()))
+CFG_DIR = HOME / ".config" / "noctalia"
+CFG_TOML = CFG_DIR / "config.toml"
+STATE_DIR = HOME / ".local" / "state" / "noctalia"
+SETTINGS = STATE_DIR / "settings.toml"
+PROFILES = STATE_DIR / "profiles"
+PLUGIN_DATA = STATE_DIR / "plugins" / "data"
+FALLBACK_WALL_DIR = HOME / "Imagens" / "wallpapers"
+
+def log(m): print(f"[noctalia-profile] {m}", file=sys.stderr)
+
+def noctalia_version():
+    try:
+        out = subprocess.run(["noctalia", "--version"], capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() or out.stderr.strip()
+    except Exception:
+        return ""
+
+def load_settings():
+    import tomllib
+    with open(SETTINGS, "rb") as f:
+        return tomllib.load(f)
+
+def wallpaper_paths():
+    """Todas as chaves 'path' dentro de [wallpaper] (default/last/monitors)."""
+    try:
+        data = load_settings()
+    except Exception as e:
+        log(f"aviso: nao consegui ler settings.toml: {e}")
+        return []
+    found = []
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "path" and isinstance(v, str) and v.strip():
+                    found.append(v)
+                else:
+                    walk(v)
+    walk(data.get("wallpaper", {}))
+    # caminhos unicos preservando ordem
+    seen, out = set(), []
+    for p in found:
+        if p not in seen:
+            seen.add(p); out.append(p)
+    return out
+
+def copy_tree(src, dst):
+    if src.exists():
+        shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
+        return True
+    return False
+
+# ── save ────────────────────────────────────────────────────────────────────
+def cmd_save(args):
+    prof = PROFILES / args.name
+    if prof.exists():
+        shutil.rmtree(prof)  # sobrescreve perfil existente
+    prof.mkdir(parents=True, exist_ok=True)
+
+    # 1) config dir (config.toml + palettes)
+    if copy_tree(CFG_DIR, prof / "config"):
+        log("config/ (config.toml + palettes) salvo")
+    # 2) settings.toml
+    if SETTINGS.exists():
+        shutil.copy2(SETTINGS, prof / "settings.toml")
+        log("settings.toml salvo (barra, widgets, tema, wallpaper, plugins)")
+    # 3) plugins data
+    if copy_tree(PLUGIN_DATA, prof / "plugins-data"):
+        log("plugins-data/ salvo")
+    # 4) wallpapers referenciados
+    wmap = {}
+    wdir = prof / "wallpapers"
+    for p in wallpaper_paths():
+        src = Path(p)
+        if src.is_file():
+            wdir.mkdir(exist_ok=True)
+            dst = wdir / src.name
+            n = 1
+            while dst.exists() and dst.stat().st_size != src.stat().st_size:
+                dst = wdir / f"{src.stem}-{n}{src.suffix}"; n += 1
+            shutil.copy2(src, dst)
+            wmap[p] = str(dst.relative_to(prof))
+            log(f"wallpaper salvo: {src.name}")
+        else:
+            log(f"aviso: wallpaper referenciado nao existe: {p}")
+    # 5) manifest
+    manifest = {
+        "name": args.name,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "hostname": socket.gethostname(),
+        "home": str(HOME),
+        "noctalia": noctalia_version(),
+        "has_config": (prof / "config" / "config.toml").exists(),
+        "has_settings": (prof / "settings.toml").exists(),
+        "wallpapers": wmap,
+    }
+    (prof / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"perfil '{args.name}' salvo em {prof}")
+
+# ── apply ───────────────────────────────────────────────────────────────────
+def cmd_apply(args):
+    prof = PROFILES / args.name
+    if not prof.is_dir():
+        raise SystemExit(f"perfil nao encontrado: {prof}")
+    manifest = {}
+    mf = prof / "manifest.json"
+    if mf.exists():
+        try: manifest = json.loads(mf.read_text(encoding="utf-8"))
+        except Exception: pass
+
+    # 1) config dir
+    if copy_tree(prof / "config", CFG_DIR):
+        log("config/ restaurado (config.toml + palettes)")
+    # 2) settings.toml
+    if (prof / "settings.toml").exists():
+        # se estiver aplicando em outra maquina, garante que diretorios base existam
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(prof / "settings.toml", SETTINGS)
+        log("settings.toml restaurado")
+    # 3) plugins data
+    if (prof / "plugins-data").is_dir():
+        copy_tree(prof / "plugins-data", PLUGIN_DATA)
+        log("plugins-data/ restaurado")
+    # 4) wallpapers: restaura nos caminhos originais; se falhar, usa fallback
+    for orig, rel in (manifest.get("wallpapers") or {}).items():
+        saved = prof / rel
+        if not saved.is_file():
+            continue
+        dest = Path(orig)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.exists():
+                shutil.copy2(saved, dest)
+                log(f"wallpaper restaurado: {dest}")
+        except Exception as e:
+            log(f"aviso: nao consegui restaurar em {dest}: {e}")
+            FALLBACK_WALL_DIR.mkdir(parents=True, exist_ok=True)
+            fb = FALLBACK_WALL_DIR / saved.name
+            shutil.copy2(saved, fb)
+            # reescreve o caminho no settings.toml
+            txt = SETTINGS.read_text(encoding="utf-8")
+            if orig in txt:
+                SETTINGS.write_text(txt.replace(orig, str(fb)), encoding="utf-8")
+                log(f"wallpaper restaurado em fallback: {fb} (caminho reescrito)")
+    # 5) recarrega
+    try:
+        subprocess.run(["noctalia", "msg", "config-reload"], check=False, timeout=10)
+        log("noctalia recarregado")
+    except Exception:
+        log("noctalia nao encontrado; recarregue manualmente")
+    log(f"perfil '{args.name}' aplicado")
+
+# ── list / delete ───────────────────────────────────────────────────────────
+def cmd_list(args):
+    if not PROFILES.exists() or not any(PROFILES.iterdir()):
+        print("nenhum perfil salvo"); return
+    for p in sorted(PROFILES.iterdir()):
+        if not p.is_dir():
+            continue
+        meta = ""
+        mf = p / "manifest.json"
+        if mf.exists():
+            try:
+                m = json.loads(mf.read_text(encoding="utf-8"))
+                meta = f"  ({m.get('saved_at','?')} @ {m.get('hostname','?')})"
+            except Exception:
+                pass
+        print(f" * {p.name}{meta}")
+
+def cmd_delete(args):
+    prof = PROFILES / args.name
+    if not prof.is_dir():
+        raise SystemExit(f"perfil nao encontrado: {prof}")
+    shutil.rmtree(prof)
+    log(f"perfil '{args.name}' removido")
+
+def main():
+    ap = argparse.ArgumentParser(prog="noctalia-profile")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("save"); sp.add_argument("name"); sp.set_defaults(func=cmd_save)
+    sp = sub.add_parser("apply"); sp.add_argument("name"); sp.set_defaults(func=cmd_apply)
+    sp = sub.add_parser("list"); sp.set_defaults(func=cmd_list)
+    sp = sub.add_parser("delete"); sp.add_argument("name"); sp.set_defaults(func=cmd_delete)
+    args = ap.parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()

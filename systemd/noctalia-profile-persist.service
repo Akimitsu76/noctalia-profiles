@@ -1,0 +1,11 @@
+[Unit]
+Description=Reaplica moldura e plugin de perfis do Noctalia
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/noctalia-profile-persist.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

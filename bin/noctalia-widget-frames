@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""noctalia-widget-frames — aplica a moldura (frame) em TODOS os widgets
+de desktop do Noctalia, de forma idempotente.
+
+Moldura canonica (igual a dos widgets que ja tem frame):
+  background = true
+  background_border = "#a11239"          (borda externa)
+  background_border_width = 3.0
+  background_inner_border = "#d21f3c"    (borda interna)
+  background_inner_border_width = 2.0
+  background_radius = 0
+  background_padding = 8   (so se faltar)
+  background_color = "surface" (so se faltar)
+
+Tambem ajusta os defaults em ~/.config/noctalia/config.toml [widgets].
+Depois de rodar: noctalia msg config-reload
+"""
+import os, re, sys
+from pathlib import Path
+
+HOME = Path(os.environ.get("HOME", Path.home()))
+SETTINGS = HOME / ".local" / "state" / "noctalia" / "settings.toml"
+CONFIG = HOME / ".config" / "noctalia" / "config.toml"
+
+# valores sempre aplicados (sobrescrevem)
+FRAME = {
+    "background": "true",
+    "background_border": '"#a11239"',
+    "background_border_width": "3.0",
+    "background_inner_border": '"#d21f3c"',
+    "background_inner_border_width": "2.0",
+    "background_radius": "0",
+}
+# so adicionados se faltarem
+OPTIONAL = {
+    "background_padding": "8",
+    "background_color": '"surface"',
+}
+
+HEADER_RE = re.compile(r'^\s*\[desktop_widgets\.widget\.([^\]]+)\.settings\]\s*$')
+NEXT_TABLE_RE = re.compile(r'^\s*\[')
+KV_RE = re.compile(r'^(\s*)([A-Za-z0-9_]+)(\s*=\s*)(.*)$')
+
+def apply_frame(block):
+    """block: list of lines (sem o header). Retorna bloco modificado."""
+    # mapa key -> indice
+    idx = {}
+    indent = "        "
+    for n, ln in enumerate(block):
+        m = KV_RE.match(ln.rstrip("\n"))
+        if m:
+            idx[m.group(2)] = n
+            indent = m.group(1)
+    new_block = list(block)
+    # aplica FRAME (sobrescreve ou adiciona)
+    for k, v in {**FRAME, **OPTIONAL}.items():
+        overwrite = k in FRAME
+        if k in idx:
+            if overwrite:
+                ln = new_block[idx[k]]
+                m = KV_RE.match(ln.rstrip("\n"))
+                if m:
+                    new_block[idx[k]] = f"{m.group(1)}{k}{m.group(3)}{v}\n"
+        else:
+            new_block.append(f"{indent}{k} = {v}\n")
+    return new_block
+
+def main():
+    text = SETTINGS.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    out, i, changed = [], 0, 0
+    while i < len(lines):
+        ln = lines[i]
+        m = HEADER_RE.match(ln.rstrip("\n"))
+        if m:
+            wid = m.group(1)
+            j = i + 1
+            while j < len(lines) and not NEXT_TABLE_RE.match(lines[j]):
+                j += 1
+            block = lines[i+1:j]
+            new_block = apply_frame(block)
+            if new_block != block:
+                changed += 1
+                print(f"[+] moldura aplicada: {wid}", file=sys.stderr)
+            out.append(ln)
+            out.extend(new_block)
+            i = j
+        else:
+            out.append(ln)
+            i += 1
+    if changed:
+        SETTINGS.write_text("".join(out), encoding="utf-8")
+    else:
+        print("todos os widgets ja estao com a moldura", file=sys.stderr)
+
+    # default para novos widgets no config.toml
+    if CONFIG.exists():
+        c = CONFIG.read_text(encoding="utf-8")
+        m = re.search(r'(?m)^\[widgets\][ \t]*$', c)
+        if m:
+            start = m.end()
+            nxt = re.search(r'(?m)^\[', c[start:])
+            end = start + (nxt.start() if nxt else len(c) - start)
+            sec = c[start:end]
+            def setkv(sec, key, val):
+                pat = re.compile(r'(?m)^[ \t]*' + re.escape(key) + r'[ \t]*=.*$')
+                if pat.search(sec):
+                    return pat.sub(f'{key} = {val}', sec, count=1)
+                return sec.rstrip("\n") + f"\n{key} = {val}\n"
+            sec = setkv(sec, "border", '"#a11239"')
+            sec = setkv(sec, "border-width", "3")
+            sec = setkv(sec, "radius", "0")
+            CONFIG.write_text(c[:start] + sec + c[end:], encoding="utf-8")
+            print("[+] defaults atualizados em config.toml [widgets]", file=sys.stderr)
+
+    print("pronto. rode:  noctalia msg config-reload", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()

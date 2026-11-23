@@ -27,7 +27,7 @@ default = ""
 id = "profiles"
 entry = "panel.luau"
 width = 460
-height = 560
+height = 500
 placement = "floating"
 position = "center"
 

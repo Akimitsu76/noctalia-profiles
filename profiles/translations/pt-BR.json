@@ -1,0 +1,8 @@
+{
+  "settings": {
+    "profiles_dir": {
+      "label": "Diretório de perfis",
+      "description": "Onde os perfis são salvos. Deixe vazio para ~/.local/state/noctalia/profiles"
+    }
+  }
+}
