@@ -1,3 +1,5 @@
+> **📦 Fonte de plugins:** este plugin também está disponível (junto com futuros plugins) em [Akimitsu76/noctalia-plugins](https://github.com/Akimitsu76/noctalia-plugins). Adicione como fonte: `noctalia msg plugins source add akimitsu git https://github.com/Akimitsu76/noctalia-plugins`
+
 # Noctalia Profiles — Grimório do Noctalia
 
 Plugin de **perfis completos** para o [Noctalia](https://noctalia.dev), no estilo do antigo
