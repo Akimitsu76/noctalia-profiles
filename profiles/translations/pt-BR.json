@@ -8,6 +8,14 @@
       "image_path": {
         "label": "Caminho da imagem",
         "description": "Caminho da imagem ou GIF a exibir"
+      },
+      "image_width": {
+        "label": "Largura da imagem",
+        "description": "Largura da área da imagem (sincronizada com o tamanho do widget)"
+      },
+      "image_height": {
+        "label": "Altura da imagem",
+        "description": "Altura da área da imagem (sincronizada com o tamanho do widget)"
       }
     }
   }

@@ -8,6 +8,14 @@
       "image_path": {
         "label": "Image path",
         "description": "Path to the image or GIF to display"
+      },
+      "image_width": {
+        "label": "Image width",
+        "description": "Width of the image area (kept in sync with the widget size)"
+      },
+      "image_height": {
+        "label": "Image height",
+        "description": "Height of the image area (kept in sync with the widget size)"
       }
     }
   }

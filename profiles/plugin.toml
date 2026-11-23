@@ -49,3 +49,21 @@ type = "file"
 label_key = "settings.sticker.image_path.label"
 description_key = "settings.sticker.image_path.description"
 default = ""
+
+[[desktop_widget.setting]]
+key = "image_width"
+type = "int"
+label_key = "settings.sticker.image_width.label"
+description_key = "settings.sticker.image_width.description"
+default = 320
+min = 16
+max = 4096
+
+[[desktop_widget.setting]]
+key = "image_height"
+type = "int"
+label_key = "settings.sticker.image_height.label"
+description_key = "settings.sticker.image_height.description"
+default = 320
+min = 16
+max = 4096
