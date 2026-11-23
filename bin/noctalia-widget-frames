@@ -209,59 +209,33 @@ def main():
     if changed:
         widgets = parse_widgets(lines)
 
-    # 3. redimensionar stickers de foto/gif e sincronizar moldura nativa
-    STICKER_TYPES = ("sticker", "victor/profiles:sticker")
+    # 3. sincronizar o tamanho da moldura nativa dos stickers.
+    #    O box é livre: largura e altura podem mudar independentemente.
+    #    (A imagem usa fit="stretch" e acompanha o box.)
     for wid, w in widgets.items():
-        if w.get("type") not in STICKER_TYPES or wid.startswith(FRAME_PREFIX): continue
-        img_path = w.get("image_path")
-        if not img_path: continue
-        try:
-            im = Image.open(img_path); iw, ih = im.size
-        except Exception: continue
+        if w.get("type") != "victor/profiles:sticker" or wid.startswith(FRAME_PREFIX): continue
         bw, bh = w.get("box_width", 0), w.get("box_height", 0)
-        if not bw or not bh or not iw or not ih: continue
-        new_bw = round(bw)
-        new_bh = round(new_bw * ih / iw)
-        if new_bh < 10: new_bh = 10
-        box_changed = abs(new_bw - bw) >= 0.5 or abs(new_bh - bh) >= 0.5
-        native = w.get("type") == "victor/profiles:sticker"
-        size_changed = native and (
-            w.get("image_width") != new_bw or w.get("image_height") != new_bh
-        )
-        if not box_changed and not size_changed: continue
+        if not bw or not bh or bw < 10 or bh < 10: continue
+        new_bw, new_bh = round(bw), round(bh)
+        if w.get("image_width") == new_bw and w.get("image_height") == new_bh: continue
 
-        if box_changed:
-            block = lines[w["header"] + 1:w["end"]]
-            new_block = []
-            for ln in block:
-                m = KV_RE.match(ln.rstrip("\n"))
-                if m and m.group(2) == "box_width":
-                    new_block.append(f"{m.group(1)}box_width{m.group(3)}{float(new_bw)}\n")
-                elif m and m.group(2) == "box_height":
-                    new_block.append(f"{m.group(1)}box_height{m.group(3)}{float(new_bh)}\n")
-                else:
-                    new_block.append(ln)
-            lines[w["header"] + 1:w["end"]] = new_block
-            print(f"[~] redimensionado: {wid} {int(bw)}x{int(bh)} -> {new_bw}x{new_bh}", file=sys.stderr)
-
-        if size_changed:
-            s0, s1 = w["settings"] + 1, w["settings_end"]
-            block = lines[s0:s1]
-            ind = "        "
-            found_w = found_h = False
-            new_block = []
-            for ln in block:
-                m = KV_RE.match(ln.rstrip("\n"))
-                if m and m.group(2) == "image_width":
-                    new_block.append(f"{ind}image_width = {new_bw}\n"); found_w = True
-                elif m and m.group(2) == "image_height":
-                    new_block.append(f"{ind}image_height = {new_bh}\n"); found_h = True
-                else:
-                    new_block.append(ln)
-            if not found_w: new_block.append(f"{ind}image_width = {new_bw}\n")
-            if not found_h: new_block.append(f"{ind}image_height = {new_bh}\n")
-            lines[s0:s1] = new_block
-            print(f"[~] moldura nativa sincronizada: {wid} {new_bw}x{new_bh}", file=sys.stderr)
+        s0, s1 = w["settings"] + 1, w["settings_end"]
+        block = lines[s0:s1]
+        ind = "        "
+        found_w = found_h = False
+        new_block = []
+        for ln in block:
+            m = KV_RE.match(ln.rstrip("\n"))
+            if m and m.group(2) == "image_width":
+                new_block.append(f"{ind}image_width = {new_bw}\n"); found_w = True
+            elif m and m.group(2) == "image_height":
+                new_block.append(f"{ind}image_height = {new_bh}\n"); found_h = True
+            else:
+                new_block.append(ln)
+        if not found_w: new_block.append(f"{ind}image_width = {new_bw}\n")
+        if not found_h: new_block.append(f"{ind}image_height = {new_bh}\n")
+        lines[s0:s1] = new_block
+        print(f"[~] moldura sincronizada: {wid} {new_bw}x{new_bh}", file=sys.stderr)
         changed = True
     if changed:
         widgets = parse_widgets(lines)
