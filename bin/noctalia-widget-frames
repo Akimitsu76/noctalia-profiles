@@ -24,7 +24,11 @@ HOME = Path(os.environ.get("HOME", Path.home()))
 SETTINGS = HOME / ".local" / "state" / "noctalia" / "settings.toml"
 FRAMES_DIR = HOME / ".local" / "state" / "noctalia" / "frames"
 
-EXCLUDE_PREFIXES = ("victor/fastfetch-desktop:", "tausif/ncs-visualizer:")
+EXCLUDE_PREFIXES = (
+    "victor/fastfetch-desktop:",
+    "victor/profiles:sticker",  # moldura nativa via ui.column
+    "tausif/ncs-visualizer:",
+)
 EXCLUDE_TYPES = ("audio_visualizer", "fancy_audio_visualizer")
 FRAME_PREFIX = "gothic-frame-"
 
@@ -100,6 +104,11 @@ def parse_widgets(lines):
                     if mi: widgets[wid]["image_path"] = mi.group(1)
                     mb = re.match(r'^\s*background\s*=\s*(true|false)', ln)
                     if mb: widgets[wid]["background"] = mb.group(1) == "true"
+                    for key in ("image_width", "image_height"):
+                        mk = re.match(r'^\s*' + key + r'\s*=\s*([0-9.]+)', ln)
+                        if mk:
+                            try: widgets[wid][key] = float(mk.group(1))
+                            except ValueError: pass
     return widgets
 
 
@@ -199,9 +208,10 @@ def main():
     if changed:
         widgets = parse_widgets(lines)
 
-    # 3. redimensionar stickers de foto/gif
+    # 3. redimensionar stickers de foto/gif e sincronizar moldura nativa
+    STICKER_TYPES = ("sticker", "victor/profiles:sticker")
     for wid, w in widgets.items():
-        if w.get("type") != "sticker" or wid.startswith(FRAME_PREFIX): continue
+        if w.get("type") not in STICKER_TYPES or wid.startswith(FRAME_PREFIX): continue
         img_path = w.get("image_path")
         if not img_path: continue
         try:
@@ -212,19 +222,45 @@ def main():
         new_bw = round(bw)
         new_bh = round(new_bw * ih / iw)
         if new_bh < 10: new_bh = 10
-        if abs(new_bw - bw) < 0.5 and abs(new_bh - bh) < 0.5: continue
-        block = lines[w["header"] + 1:w["end"]]
-        new_block = []
-        for ln in block:
-            m = KV_RE.match(ln.rstrip("\n"))
-            if m and m.group(2) == "box_width":
-                new_block.append(f"{m.group(1)}box_width{m.group(3)}{float(new_bw)}\n")
-            elif m and m.group(2) == "box_height":
-                new_block.append(f"{m.group(1)}box_height{m.group(3)}{float(new_bh)}\n")
-            else:
-                new_block.append(ln)
-        lines[w["header"] + 1:w["end"]] = new_block
-        print(f"[~] redimensionado: {wid} {int(bw)}x{int(bh)} -> {new_bw}x{new_bh}", file=sys.stderr)
+        box_changed = abs(new_bw - bw) >= 0.5 or abs(new_bh - bh) >= 0.5
+        native = w.get("type") == "victor/profiles:sticker"
+        size_changed = native and (
+            w.get("image_width") != new_bw or w.get("image_height") != new_bh
+        )
+        if not box_changed and not size_changed: continue
+
+        if box_changed:
+            block = lines[w["header"] + 1:w["end"]]
+            new_block = []
+            for ln in block:
+                m = KV_RE.match(ln.rstrip("\n"))
+                if m and m.group(2) == "box_width":
+                    new_block.append(f"{m.group(1)}box_width{m.group(3)}{float(new_bw)}\n")
+                elif m and m.group(2) == "box_height":
+                    new_block.append(f"{m.group(1)}box_height{m.group(3)}{float(new_bh)}\n")
+                else:
+                    new_block.append(ln)
+            lines[w["header"] + 1:w["end"]] = new_block
+            print(f"[~] redimensionado: {wid} {int(bw)}x{int(bh)} -> {new_bw}x{new_bh}", file=sys.stderr)
+
+        if size_changed:
+            s0, s1 = w["settings"] + 1, w["settings_end"]
+            block = lines[s0:s1]
+            ind = "        "
+            found_w = found_h = False
+            new_block = []
+            for ln in block:
+                m = KV_RE.match(ln.rstrip("\n"))
+                if m and m.group(2) == "image_width":
+                    new_block.append(f"{ind}image_width = {new_bw}\n"); found_w = True
+                elif m and m.group(2) == "image_height":
+                    new_block.append(f"{ind}image_height = {new_bh}\n"); found_h = True
+                else:
+                    new_block.append(ln)
+            if not found_w: new_block.append(f"{ind}image_width = {new_bw}\n")
+            if not found_h: new_block.append(f"{ind}image_height = {new_bh}\n")
+            lines[s0:s1] = new_block
+            print(f"[~] moldura nativa sincronizada: {wid} {new_bw}x{new_bh}", file=sys.stderr)
         changed = True
     if changed:
         widgets = parse_widgets(lines)
