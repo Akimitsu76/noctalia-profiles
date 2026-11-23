@@ -32,6 +32,9 @@ OUTER_COLOR = (0x6b, 0x0f, 0x2a, 255)
 INNER_COLOR = (0x8a, 0x12, 0x30, 255)
 OUTER_W, INNER_W = 3, 2
 
+# conteúdo encosta na borda (sem afastamento interno)
+BACKGROUND_PADDING = 0
+
 INVALID_KEYS = (
     "background_border", "background_border_width",
     "background_inner_border", "background_inner_border_width",
@@ -137,6 +140,30 @@ def main():
         new_block = [ln for ln in block
                      if not (KV_RE.match(ln.rstrip("\n")) and
                              KV_RE.match(ln.rstrip("\n")).group(2) in INVALID_KEYS)]
+        if new_block != block:
+            edits.append((w["settings"] + 1, w["settings_end"], new_block))
+    for start, end, repl in sorted(edits, reverse=True):
+        lines[start:end] = repl
+        changed = True
+    if changed:
+        widgets = parse_widgets(lines)
+
+    # 1b. zerar padding interno (conteúdo encosta na moldura)
+    edits = []
+    for wid, w in widgets.items():
+        if wid.startswith(FRAME_PREFIX) or "settings" not in w: continue
+        block = lines[w["settings"] + 1:w["settings_end"]]
+        new_block = []
+        found = False
+        for ln in block:
+            m = KV_RE.match(ln.rstrip("\n"))
+            if m and m.group(2) == "background_padding":
+                new_block.append(f"{m.group(1)}background_padding{m.group(3)}{BACKGROUND_PADDING}\n")
+                found = True
+            else:
+                new_block.append(ln)
+        if not found and w.get("background") is not False:
+            new_block.append(f"        background_padding = {BACKGROUND_PADDING}\n")
         if new_block != block:
             edits.append((w["settings"] + 1, w["settings_end"], new_block))
     for start, end, repl in sorted(edits, reverse=True):
