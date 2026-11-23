@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""noctalia-widget-frames — aplica a moldura (frame) em TODOS os widgets
-de desktop do Noctalia, de forma idempotente.
+"""noctalia-widget-frames — moldura gótico-dark nos widgets de desktop.
 
-Moldura canonica (igual a dos widgets que ja tem frame):
+Regras:
+  - TODOS os widgets recebem a moldura gótico-dark
+  - EXCETO fastfetch (victor/fastfetch-desktop:*) e NCS visualizer
+    (tausif/ncs-visualizer:*), que ficam SEM moldura/background.
+
+Moldura gótico-dark (paleta GothicRock):
   background = true
-  background_border = "#a11239"          (borda externa)
+  background_color = "surface"        # #0c0c10
+  background_border = "#a11239"       # primary (vermelho gótico)
   background_border_width = 3.0
-  background_inner_border = "#d21f3c"    (borda interna)
+  background_inner_border = "#d21f3c" # error (vermelho vivo)
   background_inner_border_width = 2.0
   background_radius = 0
-  background_padding = 8   (so se faltar)
-  background_color = "surface" (so se faltar)
+  background_padding = 10
+  background_opacity >= 0.85          # some widgets had 0.0 (invisível)
 
-Tambem ajusta os defaults em ~/.config/noctalia/config.toml [widgets].
-Depois de rodar: noctalia msg config-reload
+Idempotente. Depois: noctalia msg config-reload
 """
 import os, re, sys
 from pathlib import Path
@@ -22,98 +26,183 @@ HOME = Path(os.environ.get("HOME", Path.home()))
 SETTINGS = HOME / ".local" / "state" / "noctalia" / "settings.toml"
 CONFIG = HOME / ".config" / "noctalia" / "config.toml"
 
-# valores sempre aplicados (sobrescrevem)
+EXCLUDE_PREFIXES = ("victor/fastfetch-desktop:", "tausif/ncs-visualizer:")
+
 FRAME = {
     "background": "true",
+    "background_color": '"surface"',
     "background_border": '"#a11239"',
     "background_border_width": "3.0",
     "background_inner_border": '"#d21f3c"',
     "background_inner_border_width": "2.0",
     "background_radius": "0",
-}
-# so adicionados se faltarem
-OPTIONAL = {
-    "background_padding": "8",
-    "background_color": '"surface"',
+    "background_padding": "10",
 }
 
-HEADER_RE = re.compile(r'^\s*\[desktop_widgets\.widget\.([^\]]+)\.settings\]\s*$')
-NEXT_TABLE_RE = re.compile(r'^\s*\[')
-KV_RE = re.compile(r'^(\s*)([A-Za-z0-9_]+)(\s*=\s*)(.*)$')
+BORDER_KEYS = tuple(k for k in FRAME if k != "background")
 
-def apply_frame(block):
-    """block: list of lines (sem o header). Retorna bloco modificado."""
-    # mapa key -> indice
-    idx = {}
-    indent = "        "
+HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+WIDGET_RE = re.compile(r"^desktop_widgets\.widget\.([^.]+)$")
+SETTINGS_RE = re.compile(r"^desktop_widgets\.widget\.([^.]+)\.settings$")
+KV_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+)(\s*=\s*)(.*)$")
+TYPE_RE = re.compile(r'^\s*type\s*=\s*"([^"]+)"')
+
+
+def is_excluded(wtype):
+    return any(wtype.startswith(p) for p in EXCLUDE_PREFIXES)
+
+
+def kv_index(block):
+    idx, indent = {}, None
     for n, ln in enumerate(block):
         m = KV_RE.match(ln.rstrip("\n"))
         if m:
             idx[m.group(2)] = n
-            indent = m.group(1)
-    new_block = list(block)
-    # aplica FRAME (sobrescreve ou adiciona)
-    for k, v in {**FRAME, **OPTIONAL}.items():
-        overwrite = k in FRAME
-        if k in idx:
-            if overwrite:
-                ln = new_block[idx[k]]
-                m = KV_RE.match(ln.rstrip("\n"))
-                if m:
-                    new_block[idx[k]] = f"{m.group(1)}{k}{m.group(3)}{v}\n"
+            if indent is None:
+                indent = m.group(1)
+    return idx, indent
+
+
+def apply_frame(block, excluded):
+    """Devolve (novo_bloco, mudou)."""
+    idx, indent = kv_index(block)
+    indent = indent or "        "
+    out = list(block)
+
+    if excluded:
+        # remove todas as chaves de moldura, desliga o painel
+        out = [
+            ln for ln in out
+            if not (lambda m: m and m.group(2) in BORDER_KEYS)(KV_RE.match(ln.rstrip("\n")))
+        ]
+        idx, _ = kv_index(out)
+        if "background" in idx:
+            m = KV_RE.match(out[idx["background"]].rstrip("\n"))
+            out[idx["background"]] = f"{m.group(1)}background = false\n"
         else:
-            new_block.append(f"{indent}{k} = {v}\n")
-    return new_block
+            out.append(f"{indent}background = false\n")
+        return out, out != block
+
+    included = list(block)
+    for key, val in FRAME.items():
+        idx, _ = kv_index(included)
+        if key in idx:
+            m = KV_RE.match(included[idx[key]].rstrip("\n"))
+            included[idx[key]] = f"{m.group(1)}{key}{m.group(3)}{val}\n"
+        else:
+            included.append(f"{indent}{key} = {val}\n")
+
+    # opacity: widget com 0.0 não mostra a moldura
+    idx, _ = kv_index(included)
+    if "background_opacity" in idx:
+        m = KV_RE.match(included[idx["background_opacity"]].rstrip("\n"))
+        raw = m.group(4).strip()
+        try:
+            opacity = float(raw)
+        except ValueError:
+            opacity = 1.0
+        if opacity < 0.85:
+            included[idx["background_opacity"]] = (
+                f"{m.group(1)}background_opacity{m.group(3)}0.85\n"
+            )
+    return included, included != block
+
 
 def main():
     text = SETTINGS.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
-    out, i, changed = [], 0, 0
-    while i < len(lines):
-        ln = lines[i]
+
+    # índices dos cabeçalhos de tabela
+    headers = []
+    for n, ln in enumerate(lines):
         m = HEADER_RE.match(ln.rstrip("\n"))
         if m:
-            wid = m.group(1)
-            j = i + 1
-            while j < len(lines) and not NEXT_TABLE_RE.match(lines[j]):
-                j += 1
-            block = lines[i+1:j]
-            new_block = apply_frame(block)
-            if new_block != block:
-                changed += 1
-                print(f"[+] moldura aplicada: {wid}", file=sys.stderr)
-            out.append(ln)
-            out.extend(new_block)
-            i = j
-        else:
-            out.append(ln)
-            i += 1
-    if changed:
-        SETTINGS.write_text("".join(out), encoding="utf-8")
-    else:
-        print("todos os widgets ja estao com a moldura", file=sys.stderr)
+            headers.append((n, m.group(1)))
 
-    # default para novos widgets no config.toml
+    widgets = {}  # id -> {type, header, end, settings, settings_end}
+    for pos, (n, name) in enumerate(headers):
+        mw = WIDGET_RE.match(name)
+        if mw:
+            wid = mw.group(1)
+            end = headers[pos + 1][0] if pos + 1 < len(headers) else len(lines)
+            wtype = ""
+            for ln in lines[n + 1:end]:
+                mt = TYPE_RE.match(ln)
+                if mt:
+                    wtype = mt.group(1)
+                    break
+            widgets.setdefault(wid, {"type": wtype, "header": n, "end": end})
+
+    for pos, (n, name) in enumerate(headers):
+        ms = SETTINGS_RE.match(name)
+        if ms:
+            wid = ms.group(1)
+            end = headers[pos + 1][0] if pos + 1 < len(headers) else len(lines)
+            widgets.setdefault(wid, {"type": "", "header": n, "end": end})
+            widgets[wid].update(settings=n, settings_end=end)
+
+    # aplica de trás pra frente para não invalidar índices com inserções
+    edits = []  # (start, end, replacement)
+    changed = 0
+    for wid, w in widgets.items():
+        excluded = is_excluded(w["type"])
+        tag = "sem moldura (excluído)" if excluded else "moldura gótico-dark"
+        if "settings" in w:
+            block = lines[w["settings"] + 1:w["settings_end"]]
+            new_block, did = apply_frame(block, excluded)
+            if did:
+                edits.append((w["settings"] + 1, w["settings_end"], new_block))
+                changed += 1
+                print(f"[+] {tag}: {wid} ({w['type']})", file=sys.stderr)
+        elif not excluded:
+            # widget sem bloco .settings — cria um
+            indent = " " * (len(lines[w["header"]]) - len(lines[w["header"]].lstrip()))
+            header = f"{indent}    [desktop_widgets.widget.{wid}.settings]\n"
+            block, _ = apply_frame([], excluded)
+            new_block = [header] + [
+                f"{indent}    {ln.lstrip()}" if not ln.startswith("\n") else ln
+                for ln in block
+            ]
+            edits.append((w["end"], w["end"], new_block))
+            changed += 1
+            print(f"[+] moldura criada: {wid} ({w['type']})", file=sys.stderr)
+
+    for start, end, repl in sorted(edits, reverse=True):
+        lines[start:end] = repl
+
+    if changed:
+        SETTINGS.write_text("".join(lines), encoding="utf-8")
+    else:
+        print("nada a mudar: widgets já estão no padrão", file=sys.stderr)
+
+    # defaults para widgets novos
     if CONFIG.exists():
         c = CONFIG.read_text(encoding="utf-8")
-        m = re.search(r'(?m)^\[widgets\][ \t]*$', c)
+        m = re.search(r"(?m)^\[widgets\][ \t]*$", c)
         if m:
             start = m.end()
-            nxt = re.search(r'(?m)^\[', c[start:])
+            nxt = re.search(r"(?m)^\[", c[start:])
             end = start + (nxt.start() if nxt else len(c) - start)
             sec = c[start:end]
             def setkv(sec, key, val):
-                pat = re.compile(r'(?m)^[ \t]*' + re.escape(key) + r'[ \t]*=.*$')
+                pat = re.compile(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=.*$")
                 if pat.search(sec):
-                    return pat.sub(f'{key} = {val}', sec, count=1)
+                    return pat.sub(f"{key} = {val}", sec, count=1)
                 return sec.rstrip("\n") + f"\n{key} = {val}\n"
-            sec = setkv(sec, "border", '"#a11239"')
-            sec = setkv(sec, "border-width", "3")
-            sec = setkv(sec, "radius", "0")
+            for key, val in (
+                ("background_border", '"#a11239"'),
+                ("background_border_width", "3"),
+                ("background_inner_border", '"#d21f3c"'),
+                ("background_inner_border_width", "2"),
+                ("background_color", '"surface"'),
+                ("background_radius", "0"),
+                ("background_padding", "10"),
+            ):
+                sec = setkv(sec, key, val)
             CONFIG.write_text(c[:start] + sec + c[end:], encoding="utf-8")
-            print("[+] defaults atualizados em config.toml [widgets]", file=sys.stderr)
 
     print("pronto. rode:  noctalia msg config-reload", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()

@@ -41,13 +41,28 @@ O painel e o serviço chamam o executável `noctalia-profile`:
 install -Dm755 bin/noctalia-profile ~/.local/bin/noctalia-profile
 ```
 
-### 3. (Opcional) Moldura em todos os widgets
+### 3. (Opcional) Moldura gótico-dark nos widgets
 
 ```bash
 install -Dm755 bin/noctalia-widget-frames ~/.local/bin/noctalia-widget-frames
 noctalia-widget-frames
 noctalia msg config-reload
 ```
+
+Aplica moldura gótico-dark (paleta GothicRock) em **todos** os widgets de desktop,
+**exceto** `victor/fastfetch-desktop:*` e `tausif/ncs-visualizer:*`. O script é
+idempotente: rodar de novo não duplica nada.
+
+| Chave | Valor |
+|---|---|
+| `background_color` | `surface` (`#0c0c10`) |
+| `background_border` | `#a11239` (primary) |
+| `background_border_width` | `3` |
+| `background_inner_border` | `#d21f3c` (error) |
+| `background_inner_border_width` | `2` |
+| `background_radius` | `0` (cantos retos) |
+| `background_padding` | `10` |
+| `background_opacity` | `>= 0.85` (moldura sempre visível) |
 
 ## ✦ Uso
 
