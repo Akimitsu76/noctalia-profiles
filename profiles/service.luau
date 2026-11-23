@@ -63,17 +63,15 @@ end
 function onIpc(event, payload)
     local action, name
     if type(payload) == "table" then
-        action = payload.action
+        action = payload.action or event
         name = payload.name
-    elseif type(payload) == "string" and payload ~= "" then
-        local parts = split(payload)
-        action = parts[1]
-        name = parts[2]
-    end
-    if not action then
+    else
         local parts = split(event)
         action = parts[1]
         name = parts[2]
+        if type(payload) == "string" and payload ~= "" then
+            name = name or payload
+        end
     end
     handle(action, name)
 end
