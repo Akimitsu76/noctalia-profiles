@@ -12,7 +12,7 @@ Excluídos (sem fundo nem borda):
 Moldura: borda externa 3px #6b0f2a, interna 2px #8a1230, cantos retos.
 Stickers de foto/gif: box ajustado para proporção exata da imagem.
 """
-import os, re, sys, hashlib
+import os, re, sys, hashlib, fcntl
 from pathlib import Path
 
 try:
@@ -116,6 +116,14 @@ def remove_widget(lines, wid, widgets):
 def main():
     full = "--full" in sys.argv
     FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+    # file lock para evitar corrida com path unit / Noctalia
+    lock_path = FRAMES_DIR / ".lock"
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("outra instância rodando — saindo", file=sys.stderr)
+        return
     text = SETTINGS.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     widgets = parse_widgets(lines)

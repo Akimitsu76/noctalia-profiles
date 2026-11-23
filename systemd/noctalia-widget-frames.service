@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply gothic frames to Noctalia desktop widgets
+After=noctalia.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/noctalia-widget-frames
+ExecStartPost=/usr/bin/noctalia msg config-reload
+Nice=10

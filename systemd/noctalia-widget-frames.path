@@ -1,0 +1,9 @@
+[Unit]
+Description=Noctalia gothic widget frames (auto-apply on settings change)
+
+[Path]
+PathModified=%h/.local/state/noctalia/settings.toml
+Unit=noctalia-widget-frames.service
+
+[Install]
+WantedBy=default.target
